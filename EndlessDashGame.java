@@ -1,9 +1,9 @@
-
 import java.awt.*;
 import java.awt.event.*;
 import java.awt.image.BufferedImage;
 import java.io.*;
 import javax.swing.*;
+
 
 
 public class EndlessDashGame extends JFrame {
@@ -23,7 +23,6 @@ public class EndlessDashGame extends JFrame {
 
 
 class GamePanel extends JPanel implements ActionListener, KeyListener {
-    // (Powerup fields removed)
     private JDialog gameOverDialog = null;
     // Hurt animation
     private Image hurtSheet = new ImageIcon("images/Hurt.png").getImage();
@@ -158,7 +157,7 @@ private final int maxHealth = 4;
             }
         }
         // Move background at 0.1x platform speed (classic parallax)
-        double bgSpeed = speed * speedMultiplier * 0.025;
+        double bgSpeed = speed * speedMultiplier * 0.25;
         bgX -= bgSpeed;
         // Loop background
         if (bgX <= -1280) bgX += 1280;
