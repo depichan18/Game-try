@@ -23,6 +23,123 @@ public class EndlessDashGame extends JFrame {
 
 
 class GamePanel extends JPanel implements ActionListener, KeyListener {
+    // Track last spawn score for suplemen to avoid overlap with meat
+    private int lastSuplemenSpawnScore = -1000;
+    // Shine effect image for suplemen
+    private Image shineImg = new ImageIcon("images/shine.png").getImage();
+    // Death animation (4 frames)
+    private Image deathSheet = new ImageIcon("images/Death.png").getImage();
+    private Image[] deathFrames = new Image[4];
+    private int deathFrame = 0;
+    private int deathFrameTick = 0;
+    private final int deathFrameDelay = 8; // slower = longer animation
+    private boolean isDying = false;
+    private int deathAnimTicks = 0;
+    private final int deathAnimDuration = 32; // 4 frames * 8 ticks per frame
+    private boolean deathAnimDone = false;
+    // Suplemen item
+    private Image suplemenImg = new ImageIcon("images/suplemen.png").getImage();
+    private int suplemenX = 0, suplemenY = 0, suplemenW = 48, suplemenH = 48;
+    private boolean suplemenActive = false;
+    private int suplemenPhase = 0;
+    private int suplemenAppearCount = 0;
+    private boolean suplemenEffectActive = false;
+    private boolean suplemenEffectUsed = false;
+    // Helper: check if two rectangles are at least minDist pixels apart vertically
+    private boolean isVerticallyApart(int y1, int h1, int y2, int h2, int minDist) {
+        return (y1 + h1 + minDist <= y2) || (y2 + h2 + minDist <= y1);
+    }
+
+    // Helper: check if a candidate Y for a new item is at least minDist from all other active items
+    private boolean isItemYValid(int candidateY, int candidateH, int[] otherYs, int[] otherHs, int minDist) {
+        for (int i = 0; i < otherYs.length; i++) {
+            if (!isVerticallyApart(candidateY, candidateH, otherYs[i], otherHs[i], minDist)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    // Deterministic suplemen spawn: 1 per 250m, always at phaseStart + 125m (150m after first meat)
+    private void spawnSuplemenIfNeeded() {
+        int phaseStart = suplemenPhase * 250;
+        int phaseEnd = (suplemenPhase + 1) * 250;
+        int suplemenSpawnScore = phaseStart + 125; // 125m after phase start (first meat at 50m, suplemen at 200m)
+        if (score >= suplemenSpawnScore && score < phaseEnd && suplemenAppearCount < 1 && !suplemenActive) {
+            suplemenActive = true;
+            suplemenX = 1280 - suplemenW - 10;
+            int jumpHeight = 225;
+            int marginAbovePlatform = 60;
+            int minY = groundY - suplemenH - jumpHeight;
+            int maxY = groundY - suplemenH - marginAbovePlatform;
+            if (minY < 0) minY = 0;
+            if (maxY < minY) maxY = minY + 1;
+            // Try up to 20 times to find a Y that doesn't overlap with fish or meat
+            int[] otherYs = new int[2];
+            int[] otherHs = new int[2];
+            int idx = 0;
+            if (fishActive) { otherYs[idx] = fishY; otherHs[idx] = fishH; idx++; }
+            if (meatActive) { otherYs[idx] = meatY; otherHs[idx] = meatH; idx++; }
+            int validY = minY;
+            for (int attempt = 0; attempt < 20; attempt++) {
+                int candidateY = minY + (int)(Math.random() * (maxY - minY + 1));
+                if (isItemYValid(candidateY, suplemenH, java.util.Arrays.copyOf(otherYs, idx), java.util.Arrays.copyOf(otherHs, idx), 10)) {
+                    validY = candidateY;
+                    break;
+                }
+            }
+            suplemenY = validY;
+            suplemenAppearCount++;
+            lastSuplemenSpawnScore = score;
+        }
+    }
+    // Track last meat spawn position (in meters)
+    private int lastMeatSpawnScore = -1000;
+    // Meat item
+    private Image meatImg = new ImageIcon("images/meat.png").getImage();
+    private int meatX = 0, meatY = 0, meatW = 48, meatH = 48;
+    private boolean meatActive = false;
+    private int meatTakenThisPhase = 0;
+    private int meatPhase = 0;
+    private int meatAppearCount = 0;
+    private long meatEffectStartTime = 0;
+    private boolean meatEffectActive = false;
+    private final int meatEffectDurationMs = 3000; // 3 seconds
+    // Attack animation
+    private Image attackSheet = new ImageIcon("images/Attack.png").getImage();
+    private Image[] attackFrames = new Image[4];
+    private int attackFrame = 0;
+    private int attackFrameTick = 0;
+    private final int attackFrameDelay = 4; // Animation speed
+    private boolean isAttacking = false;
+    private int attackAnimTicks = 0;
+    private final int attackAnimDuration = 16; // duration in ticks (frames)
+    // Platform movement
+    private double platformX = 0;
+    private BufferedImage platformImg = null;
+    private int platformImgW = 0;
+    private int platformImgH = 0;
+    // Fish item for level up
+    private Image fishImg = new ImageIcon("images/fish.png").getImage();
+    private int fishCollected = 0;
+    private int fishNeeded = 5;
+    private boolean fishActive = false;
+    private int fishX = 0, fishY = 0, fishW = 48, fishH = 48;
+    private boolean levelUpRequired = false;
+    private boolean levelUpFailed = false;
+    private int fishPhase = 0; // 0: first phase, increments every 250m
+    // (Pillar variables removed)
+    // Moving obstacle (vertical)
+    private boolean obsMoving = false;
+    private int obsMoveDir = 1; // 1 = down, -1 = up
+    private int obsMoveSpeed = 4;
+    private int obsMoveMinY, obsMoveMaxY;
+    // Bird animation for floating obstacle
+    private Image birdSheet = new ImageIcon("images/bird.png").getImage();
+    private Image[] birdFrames = new Image[6];
+    private int birdFrame = 0;
+    private int birdFrameTick = 0;
+    private final int birdFrameDelay = 3; // Lower = faster animation
     private JDialog gameOverDialog = null;
     // Hurt animation
     private Image hurtSheet = new ImageIcon("images/Hurt.png").getImage();
@@ -50,7 +167,7 @@ private final int maxHealth = 4;
     private int playerY = 360, playerVelY = 0;
     private final int playerX = 200, playerW = 50, playerH = 50;
     private boolean jumping = false;
-    private int groundY = 600;
+    private int groundY = 600; // Put platform and character back to original position
     private double obsX;
     private int obsW;
     private int obsH;
@@ -59,13 +176,57 @@ private final int maxHealth = 4;
     private int speed = 12; // Lowered from 20 for slower movement
     private double speedMultiplier = 1.0;
     private long startTime;
-    private int score = 0;
+    private int score = 0; // now used for meters
     private double accumulatedDistance = 0.0;
+    private int currentLevel = 1;
+    private boolean levelUpMessage = false;
+    private long levelUpMessageTime = 0;
     private int highScore = 0;
     private boolean running = true;
     private final String HIGHSCORE_FILE = "highscore.txt";
 
     public GamePanel() {
+        // Slice Death.png into 4 frames for death animation
+        int deathSheetW = deathSheet.getWidth(this);
+        int deathSheetH = deathSheet.getHeight(this);
+        if (deathSheetW > 0 && deathSheetH > 0) {
+            int frameW = deathSheetW / 4;
+            for (int i = 0; i < 4; i++) {
+                deathFrames[i] = new BufferedImage(frameW, deathSheetH, BufferedImage.TYPE_INT_ARGB);
+                Graphics2D g2 = ((BufferedImage)deathFrames[i]).createGraphics();
+                g2.drawImage(deathSheet, 0, 0, frameW, deathSheetH, i * frameW, 0, (i + 1) * frameW, deathSheetH, this);
+                g2.dispose();
+            }
+        }
+        // Place first meat if needed
+        spawnMeatIfNeeded();
+        // Slice Attack.png into 4 frames for attack animation
+        int attackSheetW = attackSheet.getWidth(this);
+        int attackSheetH = attackSheet.getHeight(this);
+        if (attackSheetW > 0 && attackSheetH > 0) {
+            int frameW = attackSheetW / 4;
+            for (int i = 0; i < 4; i++) {
+                attackFrames[i] = new BufferedImage(frameW, attackSheetH, BufferedImage.TYPE_INT_ARGB);
+                Graphics2D g2 = ((BufferedImage)attackFrames[i]).createGraphics();
+                g2.drawImage(attackSheet, 0, 0, frameW, attackSheetH, i * frameW, 0, (i + 1) * frameW, attackSheetH, this);
+                g2.dispose();
+            }
+        }
+        // (Pillar image loading removed)
+        // Place first fish if needed
+        spawnFishIfNeeded();
+        // Slice bird.png into 6 frames for bird animation
+        int birdSheetW = birdSheet.getWidth(this);
+        int birdSheetH = birdSheet.getHeight(this);
+        if (birdSheetW > 0 && birdSheetH > 0) {
+            int frameW = birdSheetW / 6;
+            for (int i = 0; i < 6; i++) {
+                birdFrames[i] = new BufferedImage(frameW, birdSheetH, BufferedImage.TYPE_INT_ARGB);
+                Graphics2D g2 = ((BufferedImage)birdFrames[i]).createGraphics();
+                g2.drawImage(birdSheet, 0, 0, frameW, birdSheetH, i * frameW, 0, (i + 1) * frameW, birdSheetH, this);
+                g2.dispose();
+            }
+        }
         // Slice Hurt.png into 2 frames
         int hurtSheetW = hurtSheet.getWidth(this);
         int hurtSheetH = hurtSheet.getHeight(this);
@@ -90,6 +251,16 @@ private final int maxHealth = 4;
                 g2.dispose();
             }
         }
+        // Load platform image once
+        try {
+            platformImg = javax.imageio.ImageIO.read(new File("images/platform.png"));
+            platformImgW = platformImg.getWidth();
+            platformImgH = platformImg.getHeight();
+        } catch (Exception ex) {
+            platformImg = null;
+            platformImgW = 0;
+            platformImgH = 0;
+        }
         setBackground(Color.BLACK);
         setFocusable(true);
         addKeyListener(this);
@@ -102,28 +273,129 @@ private final int maxHealth = 4;
     }
 
     private void initObstacle() {
+        // If level up is required, don't spawn obstacles
+        if (levelUpRequired) return;
         obsX = 1280;
-        obsW = 80;
-        // 40% chance to float (player should not jump)
-        if (Math.random() < 0.4) {
+        // Floating obstacles after 250m, moving obstacles after 500m
+        boolean allowFloating = score >= 250;
+        boolean allowMoving = score >= 500;
+        double floatChance = allowFloating ? 0.3 : 0.0;
+        double movingChance = allowMoving ? 0.2 : 0.0;
+        double r = Math.random();
+        if (r < floatChance) {
             // Floating obstacle: always same height and always floats at a fixed height from the ground
             obsFloating = true;
-            obsH = 80; // Fixed height for floating obstacles
-            int floatGap = 180; // Distance from ground to bottom of floating obstacle
+            obsMoving = false;
+            obsW = 80;
+            obsH = 80;
+            int floatGap = 180;
             obsY = groundY - obsH - floatGap;
+        } else if (r < floatChance + movingChance) {
+            // Moving obstacle: moves up and down
+            obsFloating = false;
+            obsMoving = true;
+            obsW = 80;
+            obsH = 80;
+            // Wider vertical range: from much higher to much lower
+            obsMoveMinY = groundY - 350;
+            obsMoveMaxY = groundY - 30;
+            // Clamp so the obstacle doesn't go off screen
+            if (obsMoveMinY < 0) obsMoveMinY = 0;
+            if (obsMoveMaxY > groundY - obsH) obsMoveMaxY = groundY - obsH;
+            // Start in the middle of the allowed range
+            obsY = obsMoveMaxY - (obsMoveMaxY - obsMoveMinY) / 2;
+            obsMoveDir = Math.random() < 0.5 ? 1 : -1;
         } else {
             obsFloating = false;
-            obsH = 50 + (int)(Math.random() * 100);
+            obsMoving = false;
+            obsW = 80;
+            obsH = 80;
             obsY = groundY - obsH;
         }
     }
 
     private void loadHighScore() {
+
+
         try (BufferedReader br = new BufferedReader(new FileReader(HIGHSCORE_FILE))) {
             highScore = Integer.parseInt(br.readLine());
         } catch (Exception e) {
             highScore = 0;
         }
+    }
+
+    // Spawn a fish if needed for level up, ensuring no vertical overlap with meat or suplemen (min 10px)
+    private void spawnFishIfNeeded() {
+        int phaseStart = fishPhase * 250;
+        int phaseEnd = (fishPhase + 1) * 250;
+        if (score >= phaseStart && score < phaseEnd) {
+            fishActive = true;
+            fishX = 1280 - fishW - 10;
+            int jumpHeight = 225;
+            int marginAbovePlatform = 10;
+            int minY = groundY - fishH - jumpHeight;
+            int maxY = groundY - fishH - marginAbovePlatform;
+            if (minY < 0) minY = 0;
+            if (maxY < minY) maxY = minY + 1;
+            // Try up to 20 times to find a Y that doesn't overlap with meat or suplemen
+            int[] otherYs = new int[2];
+            int[] otherHs = new int[2];
+            int idx = 0;
+            if (meatActive) { otherYs[idx] = meatY; otherHs[idx] = meatH; idx++; }
+            if (suplemenActive) { otherYs[idx] = suplemenY; otherHs[idx] = suplemenH; idx++; }
+            int validY = minY;
+            boolean found = false;
+            for (int attempt = 0; attempt < 20; attempt++) {
+                int candidateY = minY + (int)(Math.random() * (maxY - minY + 1));
+                if (isItemYValid(candidateY, fishH, java.util.Arrays.copyOf(otherYs, idx), java.util.Arrays.copyOf(otherHs, idx), 10)) {
+                    validY = candidateY;
+                    found = true;
+                    break;
+                }
+            }
+            fishY = validY;
+        } else {
+            fishActive = false;
+        }
+    }
+
+    // Deterministic meat spawn: 2 per 250m, first at phaseStart+50, second at phaseStart+200 (75 after suplemen)
+    private void spawnMeatIfNeeded() {
+        int phaseStart = meatPhase * 250;
+        int phaseEnd = (meatPhase + 1) * 250;
+        int[] meatSpawnScores = new int[] { phaseStart + 50, phaseStart + 200 };
+        // Only spawn if not already active and not already spawned at this slot
+        for (int i = 0; i < 2; i++) {
+            if (meatAppearCount == i && !meatActive && score >= meatSpawnScores[i] && score < phaseEnd) {
+                meatActive = true;
+                meatX = 1280 - meatW - 10;
+                int jumpHeight = 225;
+                int marginAbovePlatform = 60;
+                int minY = groundY - meatH - jumpHeight;
+                int maxY = groundY - meatH - marginAbovePlatform;
+                if (minY < 0) minY = 0;
+                if (maxY < minY) maxY = minY + 1;
+                // Try up to 20 times to find a Y that doesn't overlap with fish or suplemen
+                int[] otherYs = new int[2];
+                int[] otherHs = new int[2];
+                int idx = 0;
+                if (fishActive) { otherYs[idx] = fishY; otherHs[idx] = fishH; idx++; }
+                if (suplemenActive) { otherYs[idx] = suplemenY; otherHs[idx] = suplemenH; idx++; }
+                int validY = minY;
+                for (int attempt = 0; attempt < 20; attempt++) {
+                    int candidateY = minY + (int)(Math.random() * (maxY - minY + 1));
+                    if (isItemYValid(candidateY, meatH, java.util.Arrays.copyOf(otherYs, idx), java.util.Arrays.copyOf(otherHs, idx), 10)) {
+                        validY = candidateY;
+                        break;
+                    }
+                }
+                meatY = validY;
+                meatAppearCount++;
+                lastMeatSpawnScore = score;
+                break;
+            }
+        }
+        // Do not forcibly set meatActive = false here; let it be controlled by collection or going off screen
     }
 
     private void saveHighScore() {
@@ -134,6 +406,201 @@ private final int maxHealth = 4;
 
     @Override
     public void actionPerformed(ActionEvent e) {
+        // If dying, only advance death animation, then show game over dialog
+        if (isDying) {
+            deathFrameTick++;
+            if (deathFrameTick >= deathFrameDelay) {
+                deathFrame++;
+                deathFrameTick = 0;
+                if (deathFrame >= deathFrames.length) {
+                    deathFrame = deathFrames.length - 1;
+                }
+            }
+            deathAnimTicks++;
+            if (deathAnimTicks >= deathAnimDuration) {
+                // Do not reset isDying or set deathAnimDone here!
+                // Just show the game over dialog and stop the timer, so the character stays dead
+                Timer popupDelay = new Timer(100, evt -> {
+                    ((Timer)evt.getSource()).stop();
+                    timer.stop();
+                    showGameOverDialog();
+                });
+                popupDelay.setRepeats(false);
+                popupDelay.start();
+            }
+            repaint();
+            return;
+        }
+        // Handle suplemen phase and respawn logic
+        int suplemenPhaseEnd = (suplemenPhase + 1) * 250;
+        if (score >= suplemenPhaseEnd) {
+            suplemenPhase++;
+            suplemenAppearCount = 0;
+            suplemenActive = false;
+            suplemenEffectActive = false;
+            suplemenEffectUsed = false;
+        }
+
+        // Always call spawnSuplemenIfNeeded every frame
+        spawnSuplemenIfNeeded();
+
+        // Move suplemen if active
+        if (suplemenActive) {
+            suplemenX -= (int)(speed * speedMultiplier);
+            if (suplemenX + suplemenW < 0) {
+                suplemenActive = false;
+            }
+        }
+
+        // Check for suplemen collection
+        if (suplemenActive && running) {
+            Rectangle playerRect = new Rectangle(playerX, playerY, playerW, playerH);
+            Rectangle suplemenRect = new Rectangle(suplemenX, suplemenY, suplemenW, suplemenH);
+            if (playerRect.intersects(suplemenRect)) {
+                suplemenActive = false;
+                suplemenEffectActive = true;
+                suplemenEffectUsed = false;
+                // Trigger attack animation when collecting suplemen
+                isAttacking = true;
+                attackAnimTicks = 0;
+                attackFrame = 0;
+                attackFrameTick = 0;
+            }
+        }
+        // Handle meat effect duration
+        if (meatEffectActive && System.currentTimeMillis() - meatEffectStartTime > meatEffectDurationMs) {
+            meatEffectActive = false;
+        }
+
+        // Handle meat phase and respawn logic
+        int meatPhaseEnd = (meatPhase + 1) * 250;
+        if (score >= meatPhaseEnd) {
+            meatPhase++;
+            meatAppearCount = 0;
+            lastMeatSpawnScore = -1000;
+            meatActive = false;
+        }
+
+        // Always call spawnMeatIfNeeded every frame to allow up to 2 spawns per phase
+        spawnMeatIfNeeded();
+
+        // Move meat if active (use same speed as obstacle)
+        if (meatActive) {
+            meatX -= (int)(speed * speedMultiplier);
+            // If meat goes off screen, deactivate but do not increment meatAppearCount (already incremented on spawn)
+            if (meatX + meatW < 0) {
+                meatActive = false;
+            }
+        }
+
+        // Check for meat collection
+        if (meatActive && running) {
+            Rectangle playerRect = new Rectangle(playerX, playerY, playerW, playerH);
+            Rectangle meatRect = new Rectangle(meatX, meatY, meatW, meatH);
+            if (playerRect.intersects(meatRect)) {
+                meatActive = false;
+                meatEffectActive = true;
+                meatEffectStartTime = System.currentTimeMillis();
+                // Trigger attack animation when collecting meat
+                isAttacking = true;
+                attackAnimTicks = 0;
+                attackFrame = 0;
+                attackFrameTick = 0;
+            }
+        }
+        // Attack animation logic
+        if (isAttacking) {
+            attackFrameTick++;
+            if (attackFrameTick >= attackFrameDelay) {
+                attackFrame = (attackFrame + 1) % 4;
+                attackFrameTick = 0;
+            }
+            attackAnimTicks++;
+            if (attackAnimTicks >= attackAnimDuration) {
+                isAttacking = false;
+                attackAnimTicks = 0;
+                attackFrame = 0;
+            }
+        }
+        // Move platform to the right at the same speed as obstacle
+        if (platformImgW > 0) {
+            platformX += speed * speedMultiplier;
+            if (platformX >= platformImgW) platformX -= platformImgW;
+        } else {
+            platformX += speed * speedMultiplier;
+            if (platformX >= 1280) platformX -= 1280;
+        }
+        // Handle fish collection phases and level up/fail logic (endless)
+        int phaseEnd = (fishPhase + 1) * 250;
+        if (score >= phaseEnd) {
+            levelUpRequired = true;
+            if (fishCollected < fishNeeded) {
+                // Not enough fish, fail
+                levelUpFailed = true;
+                health = 0;
+                running = false;
+                // Prevent level up message from showing if failed
+                levelUpMessage = false;
+                timer.stop();
+                repaint();
+                Timer popupDelay = new Timer(20, evt -> {
+                    ((Timer)evt.getSource()).stop();
+                    showGameOverDialog();
+                });
+                popupDelay.setRepeats(false);
+                popupDelay.start();
+                return;
+            } else {
+                // Enough fish, continue to next phase
+                levelUpRequired = false;
+                fishActive = false;
+                fishPhase++;
+                fishCollected = 0;
+                spawnFishIfNeeded(); // Ensure fish appears at start of next phase
+            }
+        }
+
+        // Move fish if active (use same speed as obstacle)
+        if (fishActive) {
+            fishX -= (int)(speed * speedMultiplier);
+            // If fish goes off screen, respawn
+            if (fishX + fishW < 0) {
+                spawnFishIfNeeded();
+            }
+        }
+        // Check for fish collection
+        if (fishActive && running) {
+            Rectangle playerRect = new Rectangle(playerX, playerY, playerW, playerH);
+            Rectangle fishRect = new Rectangle(fishX, fishY, fishW, fishH);
+            if (playerRect.intersects(fishRect)) {
+                fishCollected++;
+                spawnFishIfNeeded();
+                // Trigger attack animation
+                isAttacking = true;
+                attackAnimTicks = 0;
+                attackFrame = 0;
+                attackFrameTick = 0;
+            }
+        }
+        // Move the moving obstacle up and down
+        if (obsMoving) {
+            obsY += obsMoveDir * obsMoveSpeed;
+            if (obsY <= obsMoveMinY) {
+                obsY = obsMoveMinY;
+                obsMoveDir = 1;
+            } else if (obsY >= obsMoveMaxY) {
+                obsY = obsMoveMaxY;
+                obsMoveDir = -1;
+            }
+        }
+        // Animate bird if floating obstacle is present
+        if (obsFloating && birdFrames[0] != null) {
+            birdFrameTick++;
+            if (birdFrameTick >= birdFrameDelay) {
+                birdFrame = (birdFrame + 1) % 6;
+                birdFrameTick = 0;
+            }
+        }
         // Hurt animation logic
         if (isHurting) {
             hurtFrameTick++;
@@ -157,7 +624,7 @@ private final int maxHealth = 4;
             }
         }
         // Move background at 0.1x platform speed (classic parallax)
-        double bgSpeed = speed * speedMultiplier * 0.25;
+        double bgSpeed = speed * speedMultiplier * 0.025;
         bgX -= bgSpeed;
         // Loop background
         if (bgX <= -1280) bgX += 1280;
@@ -170,7 +637,7 @@ private final int maxHealth = 4;
         if (!running) return;
         // Increase speed every 250 meters (use score for exact sync with background change)
         speedMultiplier = 1.0 + 0.2 * (score / 250);
-        // Move obstacle at normal platform speed
+        // Move obstacle and item at the same speed (speedMultiplier applies to both)
         int gap = 170; // Lowered gap for more frequent obstacles (was 250)
         obsX -= (speed * speedMultiplier);
         if (obsX + obsW < 0) {
@@ -190,43 +657,53 @@ private final int maxHealth = 4;
         Rectangle playerRect = new Rectangle(playerX, playerY, playerW, playerH);
         Rectangle obsRect = new Rectangle((int)obsX, obsY, obsW, obsH);
         if (playerRect.intersects(obsRect)) {
-            if (!isHurting) {
-                isHurting = true;
-                hurtAnimTicks = 0;
-                hurtFrame = 0;
-                hurtFrameTick = 0;
-            }
-            if (health > 0) {
-                health--;
+            if (suplemenEffectActive && !suplemenEffectUsed) {
+                // Resist obstacle, do not decrease health, consume effect
+                suplemenEffectUsed = true;
+                suplemenEffectActive = false;
                 initObstacle();
-            }
-            if (health <= 0) {
-                running = false;
-                if (score > highScore) {
-                    highScore = score;
-                    saveHighScore();
+            } else {
+                if (!isHurting) {
+                    isHurting = true;
+                    hurtAnimTicks = 0;
+                    hurtFrame = 0;
+                    hurtFrameTick = 0;
                 }
-                // Render health bar at zero before showing dialog
-                health = 0;
-                repaint();
-                Timer popupDelay = new Timer(20, evt -> {
-                    ((Timer)evt.getSource()).stop();
-                    timer.stop();
-                    showGameOverDialog();
-                });
-                popupDelay.setRepeats(false);
-                popupDelay.start();
-                return;
+                if (health > 0) {
+                    health--;
+                    initObstacle();
+                }
+                if (health <= 0 && !isDying && !deathAnimDone) {
+                    running = false;
+                    if (score > highScore) {
+                        highScore = score;
+                        saveHighScore();
+                    }
+                    // Start death animation
+                    health = 0;
+                    isDying = true;
+                    deathAnimTicks = 0;
+                    deathFrame = 0;
+                    deathFrameTick = 0;
+                    repaint();
+                    return;
+                }
             }
         }
 
-        // --- FIXED SCORING SYSTEM ---
+        // --- LEVEL SYSTEM ---
         // Accumulate distance per frame using only the base speed (not affected by multiplier)
-        // 1 meter = 50 pixels, and speed is in pixels per frame
-        // Make score speed half as before
         double distanceThisFrame = (speed / 50.0) * 0.5;
         accumulatedDistance += distanceThisFrame;
-        score = (int)accumulatedDistance;
+        score = (int)Math.floor(accumulatedDistance); // score is now meters
+        int newLevel = (int)(accumulatedDistance / 250.0) + 1;
+        if (newLevel > currentLevel) {
+            currentLevel = newLevel;
+            levelUpMessage = true;
+            levelUpMessageTime = System.currentTimeMillis();
+        }
+        // Speed increases every level (every 250 meters)
+        speedMultiplier = 1.0 + 0.2 * (currentLevel - 1);
         repaint();
     }
 
@@ -257,16 +734,23 @@ private final int maxHealth = 4;
         title.setBounds(0, 20, 420, 50);
         panel.add(title);
 
+
         JLabel scoreLabel = new JLabel("Score: " + score + " m", SwingConstants.CENTER);
         scoreLabel.setFont(new Font("Arial", Font.BOLD, 28));
         scoreLabel.setForeground(new Color(255, 215, 0));
-        scoreLabel.setBounds(0, 80, 420, 40);
+        scoreLabel.setBounds(0, 70, 420, 40);
         panel.add(scoreLabel);
+
+        JLabel levelLabel = new JLabel("Level: " + currentLevel, SwingConstants.CENTER);
+        levelLabel.setFont(new Font("Arial", Font.BOLD, 24));
+        levelLabel.setForeground(new Color(120, 255, 255));
+        levelLabel.setBounds(0, 110, 420, 32);
+        panel.add(levelLabel);
 
         JLabel highScoreLabel = new JLabel("High Score: " + highScore + " m", SwingConstants.CENTER);
         highScoreLabel.setFont(new Font("Arial", Font.BOLD, 22));
         highScoreLabel.setForeground(new Color(100, 255, 100));
-        highScoreLabel.setBounds(0, 120, 420, 30);
+        highScoreLabel.setBounds(0, 150, 420, 30);
         panel.add(highScoreLabel);
 
         JButton retryBtn = new JButton("Retry");
@@ -298,6 +782,31 @@ private final int maxHealth = 4;
 
     // Restart the game from the dialog
     private void restartGame() {
+        isDying = false;
+        deathAnimDone = false;
+        deathAnimTicks = 0;
+        deathFrame = 0;
+        deathFrameTick = 0;
+        fishCollected = 0;
+        fishActive = false;
+        levelUpRequired = false;
+        levelUpFailed = false;
+        fishPhase = 0;
+        spawnFishIfNeeded();
+        // Reset meat and suplemen state for new game
+        meatActive = false;
+        meatAppearCount = 0;
+        meatPhase = 0;
+        lastMeatSpawnScore = -1000;
+        meatEffectActive = false;
+        meatEffectStartTime = 0;
+        suplemenActive = false;
+        suplemenAppearCount = 0;
+        suplemenPhase = 0;
+        suplemenEffectActive = false;
+        suplemenEffectUsed = false;
+        spawnMeatIfNeeded();
+        spawnSuplemenIfNeeded();
         playerY = 360;
         playerVelY = 0;
         jumping = false;
@@ -322,7 +831,6 @@ private final int maxHealth = 4;
 
     @Override
     public void paintComponent(Graphics g) {
-        // (Powerup drawing removed)
         super.paintComponent(g);
         // Draw background (scrolling, seamless)
         Image bgImg = isDay ? dayBg : nightBg;
@@ -333,6 +841,21 @@ private final int maxHealth = 4;
         if (bgXInt + bgWidth < 1280) {
             g.drawImage(bgImg, bgXInt + bgWidth, 0, bgWidth, bgHeight, this);
         }
+        // Draw suplemen if active (always in front of background)
+        if (suplemenActive) {
+            g.drawImage(suplemenImg, suplemenX, suplemenY, suplemenW, suplemenH, this);
+        }
+        // Draw meat if active (always in front of background)
+        if (meatActive) {
+            g.drawImage(meatImg, meatX, meatY, meatW, meatH, this);
+        }
+        // Draw fish if active (always in front of background)
+        if (fishActive) {
+            g.drawImage(fishImg, fishX, fishY, fishW, fishH, this);
+        }
+
+        // (Pillar drawing removed)
+        // (Powerup drawing removed)
 
         // Draw health bar using health.png icons in a boxed section
         int barWidth = 220;
@@ -369,60 +892,86 @@ private final int maxHealth = 4;
         }
         g2dHealth.dispose();
 
-        // Draw ground
-        g.setColor(Color.DARK_GRAY);
-        g.fillRect(0, groundY, 1280, 720 - groundY);
+        // Draw moving ground/platform image at the bottom of the window, smooth seamless loop
+        if (platformImg != null && platformImgW > 0 && platformImgH > 0) {
+            int drawY = 720 - platformImgH;
+            int px = (int)Math.round(platformX) % platformImgW;
+            if (px < 0) px += platformImgW;
+            // Draw enough tiles to cover the screen, always one extra
+            for (int x = -px; x < 1280 + platformImgW; x += platformImgW) {
+                g.drawImage(platformImg, x, drawY, platformImgW, platformImgH, this);
+            }
+        } else {
+            // fallback: solid color at the bottom
+            g.setColor(Color.DARK_GRAY);
+            g.fillRect(0, 650, 1280, 70);
+        }
         // Draw player (animated, bigger sprite but same hitbox)
-        int spriteW = (int)(playerW * 3);
-        int spriteH = (int)(playerH * 3);
+        int spriteW = (int)(playerW * (meatEffectActive ? 4.2 : 3));
+        int spriteH = (int)(playerH * (meatEffectActive ? 4.2 : 3));
         int spriteX = playerX - (spriteW - playerW) / 2;
         int spriteY = playerY + playerH - spriteH;
-        if (isHurting && hurtFrames[0] != null) {
-            g.drawImage(hurtFrames[hurtFrame], spriteX, spriteY, spriteW, spriteH, this);
+        boolean shine = suplemenEffectActive && !suplemenEffectUsed;
+        Graphics2D g2dSprite = (Graphics2D) g.create();
+        if (shine && shineImg != null) {
+            g2dSprite.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, 0.85f));
+            g2dSprite.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY);
+            g2dSprite.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR);
+            // Draw shine image behind the sprite, centered and scaled (even smaller size, more up)
+            int shineW = (int)(spriteW * 0.45); // smaller
+            int shineH = (int)(spriteH * 0.45); // smaller
+            int shineX = spriteX + (spriteW - shineW) / 2;
+            int shineY = spriteY + (int)(spriteH * 0.52) - (shineH / 2); // still under body, but more up
+            g2dSprite.drawImage(shineImg, shineX, shineY, shineW, shineH, this);
+        }
+        if (isDying && deathFrames[0] != null) {
+            g2dSprite.drawImage(deathFrames[deathFrame], spriteX, spriteY, spriteW, spriteH, this);
+        } else if (isAttacking && attackFrames[0] != null) {
+            g2dSprite.drawImage(attackFrames[attackFrame], spriteX, spriteY, spriteW, spriteH, this);
+        } else if (isHurting && hurtFrames[0] != null) {
+            g2dSprite.drawImage(hurtFrames[hurtFrame], spriteX, spriteY, spriteW, spriteH, this);
         } else if (walkFrames[0] != null) {
-            g.drawImage(walkFrames[walkFrame], spriteX, spriteY, spriteW, spriteH, this);
+            g2dSprite.drawImage(walkFrames[walkFrame], spriteX, spriteY, spriteW, spriteH, this);
         } else {
-            g.setColor(Color.CYAN);
-            g.fillRect(playerX, playerY, playerW, playerH);
+            g2dSprite.setColor(Color.CYAN);
+            g2dSprite.fillRect(playerX, playerY, playerW, playerH);
         }
-        // Draw obstacle: ground = normal spike, floating = flipped spike with bar
-        Graphics2D g2dObs = (Graphics2D) g.create();
-        if (!obsFloating) {
-            // Normal spike (triangle pointing up)
-            int[] triX = { (int)Math.round(obsX), (int)Math.round(obsX) + obsW/2, (int)Math.round(obsX) + obsW };
-            int[] triY = { obsY + obsH, obsY, obsY + obsH };
-            g2dObs.setColor(Color.RED);
-            g2dObs.fillPolygon(triX, triY, 3);
-            g2dObs.setStroke(new BasicStroke(4f));
-            g2dObs.setColor(Color.BLACK);
-            g2dObs.drawPolygon(triX, triY, 3);
+        // No white overlay, shine is now image-based
+        g2dSprite.dispose();
+        g2dSprite.dispose();
+        // Draw obstacle: bush (ground), animated bird (floating), or moving obstacle (crystal)
+        if (obsMoving) {
+            // Use a different image for moving obstacle, e.g., images/ground.png as a placeholder (replace as needed)
+            Image obsImg = new ImageIcon("images/ground.png").getImage();
+            g.drawImage(obsImg, (int)Math.round(obsX), obsY, obsW, obsH, this);
+        } else if (!obsFloating) {
+            Image obsImg = new ImageIcon("images/bush.png").getImage();
+            g.drawImage(obsImg, (int)Math.round(obsX), obsY, obsW, obsH, this);
         } else {
-            // Flipped spike (triangle pointing down) with bar from top of spike to top of screen
-            int x0 = (int)Math.round(obsX);
-            int x1 = x0 + obsW/2;
-            int x2 = x0 + obsW;
-            int y0 = obsY; // top of obstacle
-            int y1 = obsY + obsH; // bottom of obstacle
-            // Triangle pointing down
-            int[] triX = { x0, x1, x2 };
-            int[] triY = { y0, y1, y0 };
-            g2dObs.setColor(Color.RED);
-            g2dObs.fillPolygon(triX, triY, 3);
-            g2dObs.setStroke(new BasicStroke(4f));
-            g2dObs.setColor(Color.BLACK);
-            g2dObs.drawPolygon(triX, triY, 3);
-            // Draw bar from y1 (tip of spike) to top of screen
-            g2dObs.setColor(new Color(80,80,80));
-            g2dObs.setStroke(new BasicStroke(8f));
-            g2dObs.drawLine(x1, y1, x1, 0);
+            if (birdFrames[0] != null) {
+                // Draw the bird frame scaled up to 1.5x the obstacle box, but keep collision the same
+                int frameW = birdFrames[birdFrame].getWidth(this);
+                int frameH = birdFrames[birdFrame].getHeight(this);
+                int scaleW = (int)(obsW * 1.5);
+                int scaleH = (int)(obsH * 1.5);
+                int drawX = (int)Math.round(obsX) + (obsW - scaleW) / 2;
+                int drawY = obsY + (obsH - scaleH) / 2;
+                g.drawImage(birdFrames[birdFrame], drawX, drawY, scaleW, scaleH, this);
+            } else {
+                // fallback: draw static bird.png, also scaled up
+                Image obsImg = new ImageIcon("images/bird.png").getImage();
+                int scaleW = (int)(obsW * 1.5);
+                int scaleH = (int)(obsH * 1.5);
+                int drawX = (int)Math.round(obsX) + (obsW - scaleW) / 2;
+                int drawY = obsY + (obsH - scaleH) / 2;
+                g.drawImage(obsImg, drawX, drawY, scaleW, scaleH, this);
+            }
         }
-        g2dObs.dispose();
-        // Draw score in a semi-transparent box for visibility
+        // Draw score and info in a semi-transparent box for visibility
         int scoreBoxX = 20;
         int scoreBoxY = 20;
         int scoreBoxW = 340;
-        int scoreBoxH = 130;
-        // Draw background box (rounded, semi-transparent)
+        int scoreBoxH = 170;
         Graphics2D g2d = (Graphics2D) g.create();
         g2d.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, 0.65f));
         g2d.setColor(new Color(20, 20, 30));
@@ -432,25 +981,57 @@ private final int maxHealth = 4;
         g2d.setStroke(new BasicStroke(3f));
         g2d.drawRoundRect(scoreBoxX, scoreBoxY, scoreBoxW, scoreBoxH, 28, 28);
 
-        // Draw score text
+        // Draw score (meters)
         g2d.setFont(new Font("Arial", Font.BOLD, 32));
         g2d.setColor(Color.WHITE);
         g2d.drawString("Score: " + score + " m", scoreBoxX + 18, scoreBoxY + 44);
-        g2d.setFont(new Font("Arial", Font.BOLD, 28));
+
+        // Draw level text
+        g2d.setFont(new Font("Arial", Font.BOLD, 24));
         g2d.setColor(new Color(255, 215, 0));
-        g2d.drawString("High Score: " + highScore + " m", scoreBoxX + 18, scoreBoxY + 80);
+        g2d.drawString("Level: " + currentLevel, scoreBoxX + 18, scoreBoxY + 74);
+
+        // Draw level up message if just leveled up
+        if (levelUpMessage && System.currentTimeMillis() - levelUpMessageTime < 2000) {
+            String levelUpMsg = "selamat anda naik level " + currentLevel + "!";
+            g2d.setFont(new Font("Arial", Font.BOLD, 36));
+            g2d.setColor(new Color(255, 215, 0));
+            FontMetrics fmLevelUp = g2d.getFontMetrics();
+            int msgWidthLevelUp = fmLevelUp.stringWidth(levelUpMsg);
+            int msgHeightLevelUp = fmLevelUp.getHeight();
+            int xLevelUp = (getWidth() - msgWidthLevelUp) / 2;
+            int yLevelUp = (getHeight() - msgHeightLevelUp) / 2 + fmLevelUp.getAscent();
+            // Draw a semi-transparent rounded rectangle background for visibility
+            int padX = 32, padY = 18;
+            int bgX = xLevelUp - padX;
+            int bgY = yLevelUp - fmLevelUp.getAscent() - padY/2;
+            int bgW = msgWidthLevelUp + padX * 2;
+            int bgH = msgHeightLevelUp + padY;
+            Composite oldComp = g2d.getComposite();
+            g2d.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, 0.8f));
+            g2d.setColor(new Color(30, 30, 30));
+            g2d.fillRoundRect(bgX, bgY, bgW, bgH, 32, 32);
+            g2d.setComposite(oldComp);
+            g2d.setColor(new Color(255, 215, 0));
+            g2d.drawString(levelUpMsg, xLevelUp, yLevelUp);
+        } else {
+            levelUpMessage = false;
+        }
 
         // Draw speed multiplier text
         g2d.setFont(new Font("Arial", Font.BOLD, 22));
         g2d.setColor(new Color(120, 255, 120));
-        String speedText = String.format("You are now at %.1fx speed", speedMultiplier);
-        g2d.drawString(speedText, scoreBoxX + 18, scoreBoxY + 112);
+        String speedText = String.format("Kecepatan: %.1fx", speedMultiplier);
+        g2d.drawString(speedText, scoreBoxX + 18, scoreBoxY + 132);
+
+        // Draw fish collected counter below speed
+        g2d.setFont(new Font("Arial", Font.BOLD, 22));
+        g2d.setColor(new Color(80, 200, 255));
+        String fishText = String.format("Fish Collected: %d/%d", fishCollected, fishNeeded);
+        g2d.drawString(fishText, scoreBoxX + 18, scoreBoxY + 162);
         g2d.dispose();
         // Game over popup is now handled by dialog
     }
-
-    // Draw a heart shape centered at (cx, cy) with given size, fill and outline color
-    // (drawHeart method removed, now using images for health bar)
 
     @Override
     public void keyPressed(KeyEvent e) {
