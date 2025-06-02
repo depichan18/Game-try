@@ -4,25 +4,108 @@ import java.awt.image.BufferedImage;
 import java.io.*;
 import javax.swing.*;
 
+public class PawJump {
+    public static void main(String[] args) {
+        SwingUtilities.invokeLater(() -> {
+            MenuWindow menu = new MenuWindow();
+            menu.setVisible(true);
+        });
+    }
+}
 
-
-public class EndlessDashGame extends JFrame {
-    public EndlessDashGame() {
-        setTitle("Endless Dash Game");
-        setSize(1280, 720);
+class MenuWindow extends JFrame {
+    public MenuWindow() {
+        setTitle("Paw Jump!");
+        setSize(520, 480);
         setDefaultCloseOperation(EXIT_ON_CLOSE);
         setResizable(false);
-        add(new GamePanel());
         setLocationRelativeTo(null);
-        setVisible(true);
-    }
-    public static void main(String[] args) {
-        SwingUtilities.invokeLater(EndlessDashGame::new);
+
+        JPanel panel = new JPanel() {
+            @Override
+            protected void paintComponent(Graphics g) {
+                super.paintComponent(g);
+                g.setColor(new Color(30, 30, 60));
+                g.fillRect(0, 0, getWidth(), getHeight());
+            }
+        };
+        panel.setLayout(null);
+
+        // Game logo (show at full size, but scale down if too large for dialog)
+        final ImageIcon logoIcon = new ImageIcon("images/pawjump.png");
+        final int logoW = logoIcon.getIconWidth();
+        final int logoH = logoIcon.getIconHeight();
+        final int maxLogoW = 440;
+        final int maxLogoH = 160;
+        final int[] drawSize = new int[2];
+        drawSize[0] = logoW;
+        drawSize[1] = logoH;
+        if (logoW > maxLogoW || logoH > maxLogoH) {
+            double scaleW = maxLogoW / (double)logoW;
+            double scaleH = maxLogoH / (double)logoH;
+            double scale = Math.min(scaleW, scaleH);
+            drawSize[0] = (int)(logoW * scale);
+            drawSize[1] = (int)(logoH * scale);
+        }
+        final int drawW = drawSize[0];
+        final int drawH = drawSize[1];
+        JLabel logoLabel = new JLabel() {
+            @Override
+            protected void paintComponent(Graphics g) {
+                super.paintComponent(g);
+                Graphics2D g2 = (Graphics2D) g.create();
+                g2.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR);
+                g2.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY);
+                g2.drawImage(logoIcon.getImage(), 0, 0, drawW, drawH, this);
+                g2.dispose();
+            }
+        };
+        logoLabel.setBounds((520 - drawW) / 2, 60, drawW, drawH);
+        panel.add(logoLabel);
+
+        // Play button
+        JButton playBtn = new JButton("Play");
+        playBtn.setFont(new Font("Arial", Font.BOLD, 32));
+        playBtn.setBackground(new Color(60, 180, 255));
+        playBtn.setForeground(Color.WHITE);
+        playBtn.setFocusPainted(false);
+        playBtn.setBounds(160, 260, 200, 70);
+        playBtn.addActionListener(e -> {
+            // Start the game window and close the menu
+            JFrame gameFrame = new JFrame("Paw Jump!");
+            gameFrame.setSize(1280, 720);
+            gameFrame.setDefaultCloseOperation(EXIT_ON_CLOSE);
+            gameFrame.setResizable(false);
+            GamePanel panelGame = new GamePanel();
+            gameFrame.add(panelGame);
+            gameFrame.setLocationRelativeTo(null);
+            this.dispose();
+            gameFrame.setVisible(true);
+            // Request focus for keyboard input
+            panelGame.requestFocusInWindow();
+        });
+        panel.add(playBtn);
+
+        // Highscore label (load from file if not loaded yet)
+        int highScoreValue = 0;
+        try (BufferedReader br = new BufferedReader(new FileReader("highscore.txt"))) {
+            highScoreValue = Integer.parseInt(br.readLine());
+        } catch (Exception e) {
+            highScoreValue = 0;
+        }
+        JLabel highScoreLabel = new JLabel("High Score: " + highScoreValue + " m", SwingConstants.CENTER);
+        highScoreLabel.setFont(new Font("Arial", Font.BOLD, 26));
+        highScoreLabel.setForeground(new Color(255, 215, 0));
+        highScoreLabel.setBounds(0, 350, 520, 40);
+        panel.add(highScoreLabel);
+
+        setContentPane(panel);
     }
 }
 
 
 class GamePanel extends JPanel implements ActionListener, KeyListener {
+    // Removed startDialog and gameStarted logic. GamePanel now starts immediately.
     // Track last spawn score for suplemen to avoid overlap with meat
     private int lastSuplemenSpawnScore = -1000;
     // Shine effect image for suplemen
@@ -122,7 +205,7 @@ class GamePanel extends JPanel implements ActionListener, KeyListener {
     // Fish item for level up
     private Image fishImg = new ImageIcon("images/fish.png").getImage();
     private int fishCollected = 0;
-    private int fishNeeded = 5;
+    private int fishNeeded = 15;
     private boolean fishActive = false;
     private int fishX = 0, fishY = 0, fishW = 48, fishH = 48;
     private boolean levelUpRequired = false;
@@ -406,6 +489,7 @@ private final int maxHealth = 4;
 
     @Override
     public void actionPerformed(ActionEvent e) {
+        // Game always runs, no menu blocking
         // If dying, only advance death animation, then show game over dialog
         if (isDying) {
             deathFrameTick++;
@@ -556,6 +640,7 @@ private final int maxHealth = 4;
                 fishActive = false;
                 fishPhase++;
                 fishCollected = 0;
+                fishNeeded = 15;
                 spawnFishIfNeeded(); // Ensure fish appears at start of next phase
             }
         }
@@ -789,11 +874,10 @@ private final int maxHealth = 4;
         deathFrameTick = 0;
         fishCollected = 0;
         fishActive = false;
+        fishNeeded = 15;
         levelUpRequired = false;
         levelUpFailed = false;
         fishPhase = 0;
-        spawnFishIfNeeded();
-        // Reset meat and suplemen state for new game
         meatActive = false;
         meatAppearCount = 0;
         meatPhase = 0;
@@ -805,8 +889,6 @@ private final int maxHealth = 4;
         suplemenPhase = 0;
         suplemenEffectActive = false;
         suplemenEffectUsed = false;
-        spawnMeatIfNeeded();
-        spawnSuplemenIfNeeded();
         playerY = 360;
         playerVelY = 0;
         jumping = false;
@@ -821,8 +903,12 @@ private final int maxHealth = 4;
         hurtFrameTick = 0;
         walkFrame = 0;
         walkFrameTick = 0;
-        // (Powerup reset removed)
         speedMultiplier = 1.0;
+        currentLevel = 1;
+        levelUpMessage = false;
+        levelUpMessageTime = 0;
+        // Force fish to spawn immediately after retry (phase 0, score 0)
+        spawnFishIfNeeded();
         timer.restart();
         requestFocusInWindow();
     }
@@ -857,32 +943,37 @@ private final int maxHealth = 4;
         // (Pillar drawing removed)
         // (Powerup drawing removed)
 
-        // Draw health bar using health.png icons in a boxed section
-        int barWidth = 220;
+        // Draw health bar using health.png icons, right side, text and bar centered as a group
+        int barWidth = maxHealth * 48;
         int barHeight = 60;
-        int startX = 1280 - barWidth - 30;
         int y = 40;
-        // Draw health box background (rounded, semi-transparent)
+        int rightMargin = 50; // match score box
+        int healthBoxPadding = 30; // padding from top, like score box
+        int groupWidth = Math.max(barWidth, 180); // 180 is min width for text centering
+        int groupX = 1280 - groupWidth - rightMargin;
+        int groupY = healthBoxPadding;
         Graphics2D g2dHealth = (Graphics2D) g.create();
+        // Draw black transparent background (no border)
         g2dHealth.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, 0.7f));
         g2dHealth.setColor(new Color(30, 30, 40));
-        g2dHealth.fillRoundRect(startX - 16, y - 32, barWidth + 32, barHeight + 44, 28, 28);
+        g2dHealth.fillRoundRect(groupX - 16, groupY - 12, groupWidth + 32, barHeight + 44, 28, 28);
         g2dHealth.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, 1.0f));
-        g2dHealth.setColor(new Color(80, 200, 255));
-        g2dHealth.setStroke(new BasicStroke(3f));
-        g2dHealth.drawRoundRect(startX - 16, y - 32, barWidth + 32, barHeight + 44, 28, 28);
-        // Draw label above health bar, right-aligned
+        // Draw label above health bar, centered within group
         g2dHealth.setFont(new Font("Arial", Font.BOLD, 20));
         g2dHealth.setColor(Color.WHITE);
         String healthLabel = "Remaining Health";
         FontMetrics fm = g2dHealth.getFontMetrics();
         int labelWidth = fm.stringWidth(healthLabel);
-        g2dHealth.drawString(healthLabel, startX + barWidth - labelWidth, y - 10);
-        // Draw hearts (health.png for full, faded for missing)
+        int labelX = groupX + (groupWidth - labelWidth) / 2;
+        int labelY = groupY + 18;
+        g2dHealth.drawString(healthLabel, labelX, labelY);
+        // Draw hearts (health.png for full, faded for missing), centered within group
         Image heartImg = new ImageIcon("images/health.png").getImage();
+        int heartsStartX = groupX + (groupWidth - barWidth) / 2;
+        int heartsY = labelY + 8;
         for (int i = 0; i < maxHealth; i++) {
-            int heartX = startX + i * 48;
-            int heartY = y + 10;
+            int heartX = heartsStartX + i * 48;
+            int heartY = heartsY;
             if (i < health) {
                 g2dHealth.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, 1.0f));
             } else {
@@ -967,7 +1058,7 @@ private final int maxHealth = 4;
                 g.drawImage(obsImg, drawX, drawY, scaleW, scaleH, this);
             }
         }
-        // Draw score and info in a semi-transparent box for visibility
+        // Draw score and info with black transparent background (no border)
         int scoreBoxX = 20;
         int scoreBoxY = 20;
         int scoreBoxW = 340;
@@ -977,21 +1068,19 @@ private final int maxHealth = 4;
         g2d.setColor(new Color(20, 20, 30));
         g2d.fillRoundRect(scoreBoxX, scoreBoxY, scoreBoxW, scoreBoxH, 28, 28);
         g2d.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, 1.0f));
-        g2d.setColor(new Color(80, 200, 255));
-        g2d.setStroke(new BasicStroke(3f));
-        g2d.drawRoundRect(scoreBoxX, scoreBoxY, scoreBoxW, scoreBoxH, 28, 28);
 
-        // Draw score (meters)
+        int scoreTextX = scoreBoxX + 18;
+        int scoreTextY = scoreBoxY + 34;
         g2d.setFont(new Font("Arial", Font.BOLD, 32));
         g2d.setColor(Color.WHITE);
-        g2d.drawString("Score: " + score + " m", scoreBoxX + 18, scoreBoxY + 44);
+        g2d.drawString("Score: " + score + " m", scoreTextX, scoreTextY);
 
         // Draw level text
         g2d.setFont(new Font("Arial", Font.BOLD, 24));
         g2d.setColor(new Color(255, 215, 0));
-        g2d.drawString("Level: " + currentLevel, scoreBoxX + 18, scoreBoxY + 74);
+        g2d.drawString("Level: " + currentLevel, scoreTextX, scoreTextY + 30);
 
-        // Draw level up message if just leveled up
+        // Draw level up message if just leveled up (keep background for visibility)
         if (levelUpMessage && System.currentTimeMillis() - levelUpMessageTime < 2000) {
             String levelUpMsg = "selamat anda naik level " + currentLevel + "!";
             g2d.setFont(new Font("Arial", Font.BOLD, 36));
@@ -1022,13 +1111,13 @@ private final int maxHealth = 4;
         g2d.setFont(new Font("Arial", Font.BOLD, 22));
         g2d.setColor(new Color(120, 255, 120));
         String speedText = String.format("Kecepatan: %.1fx", speedMultiplier);
-        g2d.drawString(speedText, scoreBoxX + 18, scoreBoxY + 132);
+        g2d.drawString(speedText, scoreTextX, scoreTextY + 88);
 
         // Draw fish collected counter below speed
         g2d.setFont(new Font("Arial", Font.BOLD, 22));
         g2d.setColor(new Color(80, 200, 255));
         String fishText = String.format("Fish Collected: %d/%d", fishCollected, fishNeeded);
-        g2d.drawString(fishText, scoreBoxX + 18, scoreBoxY + 162);
+        g2d.drawString(fishText, scoreTextX, scoreTextY + 118);
         g2d.dispose();
         // Game over popup is now handled by dialog
     }
